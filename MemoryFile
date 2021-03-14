@@ -1,0 +1,187 @@
+#pragma once
+#include <string.h>
+#include <windows.h>
+#include <memory>
+#include <string>
+
+
+namespace Memory{
+    using byte = unsigned char;
+};
+
+
+namespace{
+    class MemoryBuffer{
+    public:
+        MemoryBuffer(void* memory,size_t size);
+        
+        template<class T>
+        MemoryBuffer(T* memory):MemoryBuffer((void*)memory,sizeof(T)){}
+
+        MemoryBuffer(const char* memory):MemoryBuffer((void*)memory,strlen(memory)){
+        }
+
+        operator void*();
+
+        template<class T>
+        T& ValueCast(){
+            return *(T*)( (Memory::byte*)(this->memory) + this->pointer);
+        }
+
+        template<class T>
+        const T& ValueCast()const{
+            return *(const T*)( (Memory::byte*)(this->memory) + this->pointer);
+        }
+
+        template<class T>
+        T& V(){
+            return ValueCast<T>();
+        }
+
+        template<class T>
+        const T& V()const{
+            return ValueCast<T>();
+        }
+
+        template<class T>
+        T* PointerCast(){
+            return (T*)( (Memory::byte*)(this->memory) + this->pointer);
+        }
+
+        template<class T>
+        const T* PointerCast()const{
+            return (T*)( (Memory::byte*)(this->memory) + this->pointer);
+        }
+
+        template<class T>
+        T* P(){
+            return PointerCast<T>();
+        }
+
+        template<class T>
+        const T* P()const{
+            return PointerCast<T>();
+        }
+
+        virtual bool Forward(size_t size = 1){
+            pointer -= size;
+            return (pointer > size || pointer < 0) ? false : true;
+        }
+
+        virtual bool Next(size_t size = 1){
+            pointer += size;
+            return (pointer > size || pointer < 0) ? false : true;
+        }
+
+        virtual void Reset(){
+            pointer = 0;
+        }
+
+        virtual size_t SizeOfRest(){
+            return this->size - this->pointer;
+        }
+
+        virtual size_t Size()const{ return this->size; }
+        virtual size_t Position()const{ return this->pointer; }
+
+
+        virtual bool Copy(MemoryBuffer from, size_t size = 0); // using 0 to detect
+
+        virtual void Fill(Memory::byte fillWith = '\0', bool fromOrigin = false);
+
+    protected:
+        size_t size;
+        size_t pointer;
+        void* memory;
+};
+
+
+class FileBuffer{
+    public:
+        static FileBuffer&& New(std::string path, size_t size = 1024);
+        virtual ~FileBuffer();
+
+        operator void*();
+
+        template<class T>
+        operator T*(){
+            return (T*)memory;
+        }
+
+        virtual MemoryBuffer* operator->(){
+            return (this->memoryBuffer);
+        }
+
+        virtual void Disopse();
+
+    protected:
+        bool disopsed;
+        FileBuffer(){};
+        HANDLE file;
+        HANDLE mapping;
+        void* memory;
+        size_t size;
+        MemoryBuffer *memoryBuffer;
+};
+    MemoryBuffer::MemoryBuffer(void* memory,size_t size):memory(memory),size(size),pointer(0){
+
+    }
+
+    void MemoryBuffer::Fill(Memory::byte fillWith, bool fromOrigin){
+        memset(
+            fromOrigin ?
+                this->memory :
+                (void*)( (byte*)(this->memory) + this->pointer ), 
+            fillWith, 
+            fromOrigin ? 
+                this->size :
+                (this->size - this->pointer)
+            );
+    }
+
+    bool MemoryBuffer::Copy(const MemoryBuffer from, size_t size){
+        
+        if(size == 0) size = from.Size();
+
+        if(size <= (this->Size() - this->Position()))
+            memcpy( this->P<void>(), from.P<void>(), size);
+
+        return size <= this->Size() - this->Position();
+    }
+
+    FileBuffer::~FileBuffer(){
+        if(!disopsed){
+            delete this->memoryBuffer;
+            FlushViewOfFile(this->memory, this->size);
+            UnmapViewOfFile(this->memory);
+            CloseHandle(mapping);
+            CloseHandle(file);
+            disopsed = true;
+        }
+    }
+
+    FileBuffer&& FileBuffer::New(std::string path, size_t size){
+        
+        FileBuffer *fb = new FileBuffer;
+        
+        fb->file = CreateFileA(path.data(), GENERIC_READ | GENERIC_WRITE,
+                      FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                      OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        fb->mapping = CreateFileMapping(fb->file, NULL, PAGE_READWRITE, 0, size, NULL);
+        fb->size = size;
+        fb->memory = MapViewOfFile(fb->mapping, FILE_MAP_ALL_ACCESS, 0, 0, size);
+        fb->memoryBuffer = new MemoryBuffer(fb->memory, size);
+        fb->disopsed = false;
+
+        return std::move(*fb);
+    }
+
+    void FileBuffer::Disopse(){
+        delete this->memoryBuffer;
+        FlushViewOfFile(this->memory, this->size);
+        UnmapViewOfFile(this->memory);
+        CloseHandle(mapping);
+        CloseHandle(file);
+        disopsed = true;        
+    }
+};
